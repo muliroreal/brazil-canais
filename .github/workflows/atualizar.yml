@@ -52,4 +52,35 @@ jobs:
                 url[$0]=1; if (k != "") vistos[k]=1
                 n = tolower(nome)   # classifica pelo nome do canal
                 if (n ~ /pluto/) g = "Pluto TV"
-                else if (n ~ /globonews|globo news|bandnews|band news|bandsports|sportv|record news|cnn brasil|jovem pan news/) g = "Canais Fechados e N
+                else if (n ~ /globonews|globo news|bandnews|band news|bandsports|sportv|record news|cnn brasil|jovem pan news/) g = "Canais Fechados e Notícias"
+                else if (n ~ /globo|sbt|record|band|redetv|rede tv|cultura|tv brasil|gazeta|rede vida|can.*o nova|aparecida|cnt|tv c.mara|tv senado|tv justi|rit |rede 21|rede brasil|novo tempo|tv escola|futura/) g = "Canais Abertos"
+                else g = "Outros Canais"
+                if (!sub(/group-title="[^"]*"/, "group-title=\"" g "\"", info))
+                  sub(/,/, " group-title=\"" g "\",", info)
+                print info; printf "%s", extra; print $0
+                fonte[FILENAME]++
+              }
+              info=""; extra=""
+            }
+            END {
+              print "Adicionados do iptv-org: " fonte["br.m3u"]+0     > "/dev/stderr"
+              print "Adicionados do Free-TV: " fonte["freetv.m3u"]+0  > "/dev/stderr"
+              print "Adicionados do iptv-com: " fonte["iptvcom.m3u"]+0 > "/dev/stderr"
+            }
+          ' por.m3u br.m3u freetv.m3u iptvcom.m3u > "Brazil Canais.m3u"
+
+          total=$(grep -c '^#EXTINF' "Brazil Canais.m3u" || true)
+          echo "Total de canais (sem repetidos): $total"
+          grep -o 'group-title="[^"]*"' "Brazil Canais.m3u" | sort | uniq -c
+          # segurança: se vier quase vazio, não sobrescreve a lista antiga
+          if [ "$total" -lt 10 ]; then echo "Lista muito pequena, abortando."; exit 1; fi
+          rm br.m3u por.m3u freetv.m3u iptvcom.m3u
+
+      - name: Salvar no repositório
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add "Brazil Canais.m3u"
+          git diff --cached --quiet || git commit -m "Atualiza Brazil Canais"
+          git pull --rebase origin main
+          git push
