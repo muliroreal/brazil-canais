@@ -12,50 +12,44 @@ jobs:
   atualizar:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Baixar listas do iptv-org
+      - name: Baixar as listas
         run: |
+          # fonte principal (obrigatória)
           curl -sSL --fail https://iptv-org.github.io/iptv/countries/br.m3u -o br.m3u
           curl -sSL --fail https://iptv-org.github.io/iptv/languages/por.m3u -o por.m3u
+          # fontes extras (se alguma falhar, a lista continua sendo gerada)
+          curl -sSL --fail https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8 -o freetv.m3u || : > freetv.m3u
+          curl -sSL --fail https://github.com/iptv-com/iptv/raw/refs/heads/main/lists/brazil.m3u -o iptvcom.m3u || : > iptvcom.m3u
+          for f in br.m3u por.m3u freetv.m3u iptvcom.m3u; do echo "$f: $(grep -c '^#EXTINF' $f || true) canais"; done
 
-      - name: Gerar Brazil Canais (brasileiros + em português, organizados por grupo)
+      - name: Gerar Brazil Canais (juntar, filtrar, agrupar e remover repetidos)
         run: |
           awk '
-            { sub(/\r$/, "") }
-            # 1º arquivo (por.m3u): guarda os links dos canais em português
-            FNR==NR { if ($0 !~ /^#/ && $0 != "") por[$0]=1; next }
-            # 2º arquivo (br.m3u): cabeçalho
-            FNR==1 { print; next }
-            /^#EXTINF/ { info=$0; extra=""; next }
-            /^#/ { extra = extra $0 "\n"; next }
-            $0 != "" && info != "" {
-              # só entra se o canal é brasileiro E está marcado como português
-              if ($0 in por) {
-                l = tolower(info)
-                if (l ~ /pluto/) g = "Pluto TV"
-                else if (l ~ /globonews|bandnews|band news|bandsports|sportv|record news|cnn brasil|jovem pan news/) g = "Canais Fechados e Notícias"
-                else if (l ~ /globo|sbt|record|band|redetv|rede tv|cultura|tv brasil|gazeta|rede vida|can.*o nova|aparecida|cnt|tv c.mara|tv senado|tv justi|rit |rede 21|rede brasil|novo tempo|tv escola|futura/) g = "Canais Abertos"
-                else g = "Outros Canais"
-                if (!sub(/group-title="[^"]*"/, "group-title=\"" g "\"", info))
-                  sub(/,/, " group-title=\"" g "\",", info)
-                print info; printf "%s", extra; print $0
-              }
-              info=""; extra=""
+            function chave(n) {
+              n = tolower(n)
+              gsub(/\[[^]]*\]|\([^)]*\)/, "", n)                 # tira [Geo-blocked], (720p) etc.
+              gsub(/[^a-z0-9]/, "", n)
+              sub(/(fhd|uhd|hd|sd|4k|1080p|720p|480p)$/, "", n)
+              return n
             }
-          ' por.m3u br.m3u > "Brazil Canais.m3u"
-
-          total=$(grep -c '^#EXTINF' "Brazil Canais.m3u" || true)
-          echo "Total de canais: $total"
-          grep -o 'group-title="[^"]*"' "Brazil Canais.m3u" | sort | uniq -c
-          # segurança: se vier quase vazio, não sobrescreve a lista antiga
-          if [ "$total" -lt 10 ]; then echo "Lista muito pequena, abortando."; exit 1; fi
-          rm br.m3u por.m3u
-
-      - name: Salvar no repositório
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add "Brazil Canais.m3u"
-          git diff --cached --quiet || git commit -m "Atualiza Brazil Canais"
-          git push
+            BEGIN { print "#EXTM3U" }
+            { sub(/\r$/, "") }
+            FILENAME == "por.m3u" { if ($0 !~ /^#/ && $0 != "") por[$0]=1; next }
+            FNR == 1 { info=""; extra="" }
+            /^#EXTM3U/ { next }
+            /^#EXTINF/ { info=$0; extra=""; next }
+            /^#/ { if (info != "") extra = extra $0 "\n"; next }
+            $0 != "" && info != "" {
+              l = tolower(info)
+              ok = 0
+              if (FILENAME == "br.m3u")      ok = ($0 in por)                       # brasileiro E em português
+              if (FILENAME == "freetv.m3u")  ok = (l ~ /group-title="[^"]*(brazil|brasil)/) # só a seção do Brasil
+              if (FILENAME == "iptvcom.m3u") ok = 1                                 # lista já é só do Brasil
+              nome = info; sub(/.*,/, "", nome); k = chave(nome)
+              if (ok && !($0 in url) && !(k != "" && k in vistos)) {
+                url[$0]=1; if (k != "") vistos[k]=1
+                n = tolower(nome)   # classifica pelo nome do canal
+                if (n ~ /pluto/) g = "Pluto TV"
+                else if (n ~ /globonews|globo news|bandnews|band news|bandsports|sportv|record news|cnn brasil|jovem pan news/) g = "Canais Fechados e N
