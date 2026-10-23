@@ -1,0 +1,61 @@
+name: Atualizar Brazil Canais
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # todo dia às 06:00 UTC (03:00 de Brasília)
+  workflow_dispatch:       # permite rodar manualmente pelo botão "Run workflow"
+
+permissions:
+  contents: write
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar listas do iptv-org
+        run: |
+          curl -sSL --fail https://iptv-org.github.io/iptv/countries/br.m3u -o br.m3u
+          curl -sSL --fail https://iptv-org.github.io/iptv/languages/por.m3u -o por.m3u
+
+      - name: Gerar Brazil Canais (brasileiros + em português, organizados por grupo)
+        run: |
+          awk '
+            { sub(/\r$/, "") }
+            # 1º arquivo (por.m3u): guarda os links dos canais em português
+            FNR==NR { if ($0 !~ /^#/ && $0 != "") por[$0]=1; next }
+            # 2º arquivo (br.m3u): cabeçalho
+            FNR==1 { print; next }
+            /^#EXTINF/ { info=$0; extra=""; next }
+            /^#/ { extra = extra $0 "\n"; next }
+            $0 != "" && info != "" {
+              # só entra se o canal é brasileiro E está marcado como português
+              if ($0 in por) {
+                l = tolower(info)
+                if (l ~ /pluto/) g = "Pluto TV"
+                else if (l ~ /globonews|bandnews|band news|bandsports|sportv|record news|cnn brasil|jovem pan news/) g = "Canais Fechados e Notícias"
+                else if (l ~ /globo|sbt|record|band|redetv|rede tv|cultura|tv brasil|gazeta|rede vida|can.*o nova|aparecida|cnt|tv c.mara|tv senado|tv justi|rit |rede 21|rede brasil|novo tempo|tv escola|futura/) g = "Canais Abertos"
+                else g = "Outros Canais"
+                if (!sub(/group-title="[^"]*"/, "group-title=\"" g "\"", info))
+                  sub(/,/, " group-title=\"" g "\",", info)
+                print info; printf "%s", extra; print $0
+              }
+              info=""; extra=""
+            }
+          ' por.m3u br.m3u > "Brazil Canais.m3u"
+
+          total=$(grep -c '^#EXTINF' "Brazil Canais.m3u" || true)
+          echo "Total de canais: $total"
+          grep -o 'group-title="[^"]*"' "Brazil Canais.m3u" | sort | uniq -c
+          # segurança: se vier quase vazio, não sobrescreve a lista antiga
+          if [ "$total" -lt 10 ]; then echo "Lista muito pequena, abortando."; exit 1; fi
+          rm br.m3u por.m3u
+
+      - name: Salvar no repositório
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add "Brazil Canais.m3u"
+          git diff --cached --quiet || git commit -m "Atualiza Brazil Canais"
+          git push
